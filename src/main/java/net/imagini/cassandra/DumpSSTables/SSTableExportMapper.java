@@ -53,13 +53,13 @@ import org.codehaus.jackson.JsonGenerator;
 import org.codehaus.jackson.map.ObjectMapper;
 
 /**
- * Export SSTables to JSON format.
+ * Export SSTables to file
  */
 public class SSTableExportMapper {
     private static final ObjectMapper jsonMapper = new ObjectMapper();
 
     private static final String CACHE_PREFIX = "ssTable";
-    private static final int MAX_ELEMENTS_IN_CACHE = 2;
+    private static final int MAX_ELEMENTS_IN_CACHE = 10000;
 
     private static final Options options = new Options();
     private static final CacheManager manager;
@@ -77,7 +77,7 @@ public class SSTableExportMapper {
     }
 
     /**
-     * JSON Hash Key serializer
+     * JSON Key serializer
      * 
      * @param out
      *            The output stream to write data
@@ -91,12 +91,16 @@ public class SSTableExportMapper {
     /**
      * Serialize columns using given column iterator
      * 
+     * @param colFam
+     *            The column Family to read from
      * @param columns
      *            column iterator
      * @param comparator
      *            columns comparator
      * @param cfMetaData
      *            Column Family metadata (to get validator)
+     * @param key
+     *            Rowkey for object decoration
      */
     private static void updateRow(ColumnFamily colFam, Iterator<OnDiskAtom> columns, AbstractType<?> comparator, CFMetaData cfMetaData, String key) {
 	Cache ssCache = manager.getCache(CACHE_PREFIX);
@@ -117,6 +121,15 @@ public class SSTableExportMapper {
 	ssCache.put(new Element(key, row));
     }
 
+    /**
+     * Add deletion record into Cassandra row representation for compaction
+     * phase
+     * 
+     * @param colFam
+     *            The column family we are working with
+     * @param row
+     *            The row to write the updates into
+     */
     private static void updateMeta(AbstractColumnContainer colFam, SSTableCassandraRow row) {
 	if (colFam instanceof ColumnFamily) {
 	    ColumnFamily columnFamily = (ColumnFamily) colFam;
@@ -126,12 +139,28 @@ public class SSTableExportMapper {
 	}
     }
 
+    /**
+     * Process column data, discarding if it is old and overwriting or creating
+     * as needed where the column should be part of the current record of truth
+     * 
+     * @param column
+     *            The column we are working with
+     * @param comparator
+     *            Column comparator
+     * @param cfMetaData
+     *            Metadata container for acquiring a value validator
+     * @param outRow
+     *            The row representation in which to write the result
+     * @return The newly updated cassandra row representation
+     */
     private static SSTableCassandraRow updateSSTableCassandraColumn(OnDiskAtom column, AbstractType<?> comparator, CFMetaData cfMetaData, SSTableCassandraRow outRow) {
 	if (column instanceof IColumn) {
 	    IColumn iCol = ((IColumn) column);
 	    ByteBuffer name = ByteBufferUtil.clone(iCol.name());
 	    ByteBuffer value = ByteBufferUtil.clone(iCol.value());
 
+	    // Determine if this should be part of the record of truth then
+	    // discard or use this row to update the current ROT column value.
 	    String strName = (comparator.getString(name));
 	    if (outRow.getColumns().containsKey(strName)) {
 		String timestamp = outRow.getColumns().get(strName).get("timestamp");
@@ -139,20 +168,23 @@ public class SSTableExportMapper {
 		    return outRow; // Overridden column so we don't care
 		}
 	    } else {
+		// New column
 		outRow.getColumns().put(strName, new HashMap<String, String>());
 	    }
 
+	    // Write the updated timestamp
 	    outRow.getColumns().get(strName).put("timestamp", String.valueOf(iCol.timestamp()));
 
+	    // Update the ROT with the value in this row
 	    if (iCol instanceof DeletedColumn) {
 		// TODO: Confirm deleted columns behave as expected.
-		outRow.getColumns().get(strName).put("value", String.valueOf(comparator.getString(value)));
+		outRow.getColumns().get(strName).put("value", ByteBufferUtil.bytesToHex(value));
 	    } else {
 		AbstractType<?> validator = cfMetaData.getValueValidator(cfMetaData.getColumnDefinitionFromColumnName(name));
 		outRow.getColumns().get(strName).put("value", String.valueOf(validator.getString(value)));
 	    }
 
-	    // Add tombstone if needed
+	    // Add metadata markers if needed
 	    if (column instanceof DeletedColumn) {
 		outRow.getColumnTombstones().put(strName, new SSTableCassandraDeletedColumnTombstone(iCol.timestamp()));
 	    } else if (column instanceof ExpiringColumn) {
@@ -161,6 +193,7 @@ public class SSTableExportMapper {
 		outRow.getColumnTombstones().put(strName, new SSTableCassandraCounterColumnTombstone(iCol.timestamp(), ((CounterColumn) column).timestampOfLastDelete()));
 	    }
 	} else {
+	    // Range tombstones are not fully supported
 	    assert column instanceof RangeTombstone;
 	    RangeTombstone rt = (RangeTombstone) column;
 	    SSTableCassandraRangeTombstone crt = new SSTableCassandraRangeTombstone(comparator.getString(rt.min), comparator.getString(rt.max), rt.data.localDeletionTime, rt.data.markedForDeleteAt);
@@ -255,14 +288,21 @@ public class SSTableExportMapper {
 	}
 
 	if (cmd.getArgs().length != 2) {
-	    System.err.println("You must supply exactly one sstable or folder to crawl and one output file");
+	    System.err.println("You must supply exactly one (or a comma seperated list) sstable or folder to crawl and one output file");
 	    System.err.println(usage);
 	    System.exit(1);
 	}
 
-	File ssTableFileName = new File(cmd.getArgs()[0]);
 	DatabaseDescriptor.loadSchemas();
-	readSSTables(ssTableFileName, cmd);
+	String[] inPaths = cmd.getArgs()[0].split(",");
+	for (String path : inPaths) {
+	    if (path.isEmpty()) {
+		continue;
+	    }
+	    File ssTableFileName = new File(path);
+	    // TODO: Multithreading
+	    readSSTables(ssTableFileName, cmd);
+	}
 
 	// Output
 	Cache ssCache = manager.getCache(CACHE_PREFIX);
@@ -308,10 +348,11 @@ public class SSTableExportMapper {
 
     public static String getJSON(Object value) {
 	try {
-	    if (value instanceof String && ((String) value).startsWith("{") && ((String) value).endsWith("}")) {
-		return (String) value;
-	    }
-	    return jsonMapper.writeValueAsString(value);
+	    // if (value instanceof String && ((String) value).startsWith("{")
+	    // && ((String) value).endsWith("}")) {
+	    return (String) value;
+	    // }
+	    // return jsonMapper.writeValueAsString(value);
 	} catch (Exception e) {
 	    throw new RuntimeException(e.getMessage(), e);
 	}

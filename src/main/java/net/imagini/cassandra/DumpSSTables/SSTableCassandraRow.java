@@ -63,15 +63,17 @@ public class SSTableCassandraRow implements Serializable {
 		    }
 		}
 		if (!(s.length() == 0)) {
-		    s.append(",");
+		    s.append(", ");
 		}
-		s.append(SSTableExportMapper.getJSONKey(entry.getKey()));
+		// s.append(SSTableExportMapper.getJSONKey(entry.getKey()));
+		// s.append(SSTableExportMapper.getJSON(entry.getValue().get("value")));
+		s.append("\"" + entry.getKey() + "\": ");
 		s.append(SSTableExportMapper.getJSON(entry.getValue().get("value")));
 	    }
 	}
 
 	if (s.length() > 0) {
-	    return rowKey + " " + s.toString();
+	    return rowKey + " {" + s.toString() + "}";
 	} else {
 	    return null;
 	}
