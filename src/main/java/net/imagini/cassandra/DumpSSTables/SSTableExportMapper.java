@@ -288,7 +288,7 @@ public class SSTableExportMapper {
 	}
 
 	if (cmd.getArgs().length != 2) {
-	    System.err.println("You must supply exactly one (or a comma seperated list) sstable or folder to crawl and one output file");
+	    System.err.println("You must supply exactly one, or a comma seperated list of, sstables or folders to crawl and one output file");
 	    System.err.println(usage);
 	    System.exit(1);
 	}
