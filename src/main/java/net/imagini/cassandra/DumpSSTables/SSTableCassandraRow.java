@@ -50,14 +50,14 @@ public class SSTableCassandraRow implements Serializable {
 		if (columnTombstones.containsKey(entry.getKey())) {
 		    SSTableCassandraColumnTombstone colTs = columnTombstones.get(entry.getKey());
 		    if (colTs instanceof SSTableCassandraDeletedColumnTombstone) {
-			if (Long.parseLong(entry.getValue().get("timestamp")) < colTs.getTimestamp()) {
+			if (Long.parseLong(entry.getValue().get("timestamp")) <= colTs.getTimestamp()) {
 			    continue;
 			}
 		    } else if (colTs instanceof SSTableCassandraCounterColumnTombstone) {
 			System.out.println("[Column Skipped :" + entry.getKey() + "] - This program does not currently support counter columns RowKey(" + rowKey + ")");
 			continue;
 		    } else if (colTs instanceof SSTableCassandraExpiringColumnTombstone) {
-			if (Long.parseLong(entry.getValue().get("timestamp")) < ((SSTableCassandraExpiringColumnTombstone) colTs).getTtl() + colTs.getTimestamp()) {
+			if (Long.parseLong(entry.getValue().get("timestamp")) <= ((SSTableCassandraExpiringColumnTombstone) colTs).getTtl() + colTs.getTimestamp()) {
 			    continue;
 			}
 		    }
