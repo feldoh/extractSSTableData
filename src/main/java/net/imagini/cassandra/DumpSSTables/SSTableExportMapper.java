@@ -29,7 +29,6 @@ import org.apache.cassandra.db.ColumnFamily;
 import org.apache.cassandra.db.CounterColumn;
 import org.apache.cassandra.db.DecoratedKey;
 import org.apache.cassandra.db.DeletedColumn;
-import org.apache.cassandra.db.DeletionInfo;
 import org.apache.cassandra.db.ExpiringColumn;
 import org.apache.cassandra.db.IColumn;
 import org.apache.cassandra.db.OnDiskAtom;
@@ -133,7 +132,7 @@ public class SSTableExportMapper {
     private static void updateMeta(AbstractColumnContainer colFam, SSTableCassandraRow row) {
 	if (colFam instanceof ColumnFamily) {
 	    ColumnFamily columnFamily = (ColumnFamily) colFam;
-	    if (!columnFamily.deletionInfo().equals(DeletionInfo.LIVE)) {
+	    if (!(columnFamily.deletionInfo().isLive())) {
 		row.getTombstones().add(new SSTableCassandraTombstone(columnFamily.deletionInfo().getTopLevelDeletion().localDeletionTime, columnFamily.deletionInfo().getTopLevelDeletion().markedForDeleteAt));
 	    }
 	}
